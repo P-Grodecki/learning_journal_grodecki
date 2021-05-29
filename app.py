@@ -1,42 +1,84 @@
+from datetime import date
+
 from flask import Flask, g      
+from flask import (render_template, redirect, url_for)
+from flask.globals import request
 
-from flask import (render_template, flash, redirect, url_for, abort)
-from flask.wrappers import Response
-
-from flask_bcrypt import check_password_hash
-
-from flask_login import (LoginManager, login_user, logout_user,
-                        login_required, current_user)
-
+import models
 
 DEBUG = True
 app = Flask(__name__)
-app.secret_key = "786sd32rj289fgkm5yh780bgf65rfp;asdpo'4390['56o[rtxl[k54sd765o[er76t69tp7qw3r74y98jhjt"
+
+
+@app.before_request
+def before_request():
+    """ Connect to Database Before each request"""
+    g.db = models.DATABASE
+    g.db.connect()
+
+
+@app.after_request
+def after_request(response):
+    """ Close connection with database. """
+    g.db.close()
+    return response
+
 
 @app.route('/')
 @app.route('/entries')
 def index():
-    return render_template("index.html")
+    # Begin stream of journal entries
+    if models.Entry.select().count() == 0:
+        # If no entries exist, then add a sample entry.
+        entry = models.Entry.create_entry(models.sample_entry())    
+    entries = models.Entry.select().order_by(models.Entry.entry_date).limit(100)
+    return render_template("index.html", entries = entries, models = models)
 
-@app.route('/entries/new')
-def create():
-    return render_template("new.html")
 
-@app.route('/entries/<id>')
+@app.route('/entries/new', methods=['GET','POST'])
+def add():
+    # User can add Journal Entries
+    if request.method == 'POST':
+        form_data = dict(request.form.items())
+        new_entry = models.Entry.create_entry(form_data)
+        return redirect(url_for('index'))
+    return render_template('new.html', thedate = date.today())
+
+
+@app.route('/entries/<id>', methods=['GET'])
 def detail(id):
-    return render_template('detail.html')
+    # Renders a detail page of the selected journal entry.
+    matching_entry = models.Entry.get(entry_id=id)
+    return render_template(
+        'detail.html', 
+        entry = matching_entry,
+        long_date_str = models.long_date_str(matching_entry)
+        )
 
-@app.route('/entries/<id>/edit')
+
+@app.route('/entries/<id>/edit', methods=['GET', 'POST'])
 def edit(id):
-    return render_template('edit.html')
+    # Allows user to edit an entry with the id passed into the route.
+    # Redirects to the homepage once record is updated.
+    matching_entry = models.Entry.get(entry_id=id)
+    if request.method == 'POST':
+        matching_entry = models.Entry.get(entry_id=id)
+        form_data = dict(request.form.items())
+        models.update_entry(matching_entry, form_data)
+        return redirect(url_for('index'))
+    return render_template('edit.html', entry=matching_entry)
+
 
 @app.route('/entries/<id>/delete')
 def delete(id):
-    flash("the deleted command has been called!")
+    # Deletes the current journal entry and redirects user to homepage.
+    delete_row = models.remove_entry(id)
     return redirect(url_for('index'))
 
 
-
-
 if __name__ == "__main__":
+    models.initialize()
+    if models.Entry.select().count() == 0:
+        new_entry = models.Entry.create_entry(models.sample_entry())
+
     app.run(debug=DEBUG)
